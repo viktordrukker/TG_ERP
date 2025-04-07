@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+  # API Gateway
+  api-gateway:
+    build:
+      context: ../services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - ORG_SERVICE_URL=http://org-service:3002
+      - COMMUNICATION_SERVICE_URL=http://communication-service:3003
+      - PROJECT_SERVICE_URL=http://project-service:3004
+      - WORKPLACE_SERVICE_URL=http://workplace-service:3005
+    depends_on:
+      - auth-service
+      - org-service
+      - communication-service
+      - project-service
+      - workplace-service
+    volumes:
+      - ../services/api-gateway:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Auth & ACL Service
+  auth-service:
+    build:
+      context: ../services/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - POSTGRES_URI=postgres://postgres:postgres@postgres:5432/tg_erp_auth
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+      - JWT_SECRET=your_jwt_secret
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      - postgres
+      - rabbitmq
+    volumes:
+      - ../services/auth-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Org Structure Service
+  org-service:
+    build:
+      context: ../services/org-service
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+    depends_on:
+      - neo4j
+      - rabbitmq
+    volumes:
+      - ../services/org-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Communication Service
+  communication-service:
+    build:
+      context: ../services/communication-service
+      dockerfile: Dockerfile
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+      - MONGODB_URI=mongodb://mongo:27017/tg_erp_communication
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      - mongo
+      - rabbitmq
+    volumes:
+      - ../services/communication-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Project & Initiative Service
+  project-service:
+    build:
+      context: ../services/project-service
+      dockerfile: Dockerfile
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=development
+      - PORT=3004
+      - POSTGRES_URI=postgres://postgres:postgres@postgres:5432/tg_erp_project
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+    depends_on:
+      - postgres
+      - rabbitmq
+    volumes:
+      - ../services/project-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Workplace Service
+  workplace-service:
+    build:
+      context: ../services/workplace-service
+      dockerfile: Dockerfile
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=development
+      - PORT=3005
+      - MONGODB_URI=mongodb://mongo:27017/tg_erp_workplace
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+    depends_on:
+      - mongo
+      - rabbitmq
+    volumes:
+      - ../services/workplace-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # Analytics & AI/ML Service
+  analytics-service:
+    build:
+      context: ../services/analytics-service
+      dockerfile: Dockerfile
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=development
+      - PORT=3006
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=mytoken
+      - INFLUXDB_ORG=tg_erp
+      - INFLUXDB_BUCKET=analytics
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+    depends_on:
+      - influxdb
+      - rabbitmq
+    volumes:
+      - ../services/analytics-service:/app
+      - /app/node_modules
+    networks:
+      - tg-erp-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_MULTIPLE_DATABASES=tg_erp_auth,tg_erp_project
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d
+    networks:
+      - tg-erp-network
+
+  # MongoDB Database
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - tg-erp-network
+
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j-data:/data
+    networks:
+      - tg-erp-network
+
+  # InfluxDB Time-Series Database
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password
+      - DOCKER_INFLUXDB_INIT_ORG=tg_erp
+      - DOCKER_INFLUXDB_INIT_BUCKET=analytics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - tg-erp-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - tg-erp-network
+
+networks:
+  tg-erp-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  mongo-data:
+  neo4j-data:
+  influxdb-data:
+  rabbitmq-data:

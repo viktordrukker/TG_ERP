@@ -1,0 +1,172 @@
+name: TG_ERP CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service, api-gateway]
+        
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd services/${{ matrix.service }}
+          npm ci
+      
+      - name: Lint
+        run: |
+          cd services/${{ matrix.service }}
+          npm run lint
+      
+      - name: Type check
+        run: |
+          cd services/${{ matrix.service }}
+          npx tsc --noEmit
+      
+      - name: Run tests
+        run: |
+          cd services/${{ matrix.service }}
+          npm test
+  
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        service: [auth-service, api-gateway]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to DockerHub
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: tg-erp/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/${{ matrix.service }}
+          push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to Staging (Hetzner Cloud)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.STAGING_KNOWN_HOSTS }}
+          
+      - name: Deploy to staging environment
+        run: |
+          echo "Deploying to staging environment on Hetzner Cloud..."
+          ssh ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }} << 'EOF'
+            # Pull the latest Docker images
+            docker pull tg-erp/api-gateway:develop
+            docker pull tg-erp/auth-service:develop
+            
+            # Navigate to the project directory
+            cd ~/tg-erp
+            
+            # Update the .env files if needed
+            # [commands to update environment variables if necessary]
+            
+            # Stop and remove the existing containers
+            docker-compose down
+            
+            # Start the services with the new images
+            docker-compose up -d
+            
+            # Run any migrations if needed
+            # [migration commands if necessary]
+            
+            # Verify deployment
+            docker-compose ps
+          EOF
+  
+  deploy-prod:
+    name: Deploy to Production (Hetzner Cloud)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+          
+      - name: Deploy to production environment
+        run: |
+          echo "Deploying to production environment on Hetzner Cloud..."
+          ssh ${{ secrets.PRODUCTION_SSH_USER }}@${{ secrets.PRODUCTION_HOST }} << 'EOF'
+            # Pull the latest Docker images
+            docker pull tg-erp/api-gateway:latest
+            docker pull tg-erp/auth-service:latest
+            
+            # Navigate to the project directory
+            cd ~/tg-erp
+            
+            # Create a backup before deployment
+            ./scripts/backup.sh
+            
+            # Update the .env files if needed
+            # [commands to update environment variables if necessary]
+            
+            # Stop and remove the existing containers
+            docker-compose down
+            
+            # Start the services with the new images
+            docker-compose up -d
+            
+            # Run any migrations if needed
+            # [migration commands if necessary]
+            
+            # Verify deployment
+            docker-compose ps
+          EOF
